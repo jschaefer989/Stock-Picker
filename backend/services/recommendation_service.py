@@ -10,8 +10,10 @@ Strategy:
 """
 from __future__ import annotations
 
+from datetime import UTC, date, datetime
 import logging
 import math
+import re
 from functools import lru_cache
 from typing import Any, cast
 
@@ -26,6 +28,31 @@ UNDERWEIGHT_THRESHOLD_PCT = 5.0
 MAX_RECOMMENDATIONS_PER_SECTOR = 3
 MIN_STOCK_RECOMMENDATIONS_PER_SECTOR = 1
 MIN_RECOMMENDATION_SCORE = 0.5
+
+POSITIVE_NEWS_KEYWORDS = {
+    "beat", "beats", "upgrade", "upgraded", "buy", "bullish", "surge", "surges", "growth",
+    "strong", "record", "expands", "expansion", "profit", "profits", "outperform", "outperforms",
+}
+
+NEGATIVE_NEWS_KEYWORDS = {
+    "miss", "misses", "downgrade", "downgraded", "sell", "bearish", "drop", "drops", "decline",
+    "weak", "lawsuit", "probe", "cuts", "cut", "slump", "warning", "risk", "risks",
+}
+
+POSITIVE_NEWS_PHRASES = {
+    "raised guidance",
+    "beats estimates",
+    "earnings beat",
+    "price target raised",
+}
+
+NEGATIVE_NEWS_PHRASES = {
+    "not bullish",
+    "cuts guidance",
+    "misses estimates",
+    "earnings miss",
+    "price target cut",
+}
 
 # Catalogue: sector -> list of (ticker, name, category, rationale, [sectors])
 SECTOR_CATALOGUE: dict[str, list[tuple[str, str, str, str, list[str]]]] = {
@@ -174,10 +201,148 @@ def _expense_ratio(ticker: str) -> float | None:
 
 
 @lru_cache(maxsize=256)
-def _candidate_components(ticker: str) -> tuple[float, float, float, float, float | None, float]:
+def _news_signal(ticker: str) -> tuple[float, int]:
+    """Return a normalized sentiment score in [-1, 1] and story count."""
+    try:
+        items = cast(list[dict[str, Any]], yf.Ticker(ticker).news or [])
+    except Exception:
+        items = []
+
+    if not items:
+        return 0.0, 0
+
+    score_total = 0.0
+    scored_items = 0
+    for item in items[:12]:
+        content = item.get("content")
+        content_dict = content if isinstance(content, dict) else {}
+
+        title = str(item.get("title") or content_dict.get("title") or "")
+        summary = str(item.get("summary") or content_dict.get("summary") or "")
+        description = str(content_dict.get("description") or "")
+
+        # Basic cleanup for html snippets in some feeds.
+        description = re.sub(r"<[^>]+>", " ", description)
+
+        text = " ".join([title, summary, description]).lower().strip()
+        if not text:
+            continue
+
+        pos_hits = sum(1 for word in POSITIVE_NEWS_KEYWORDS if word in text)
+        neg_hits = sum(1 for word in NEGATIVE_NEWS_KEYWORDS if word in text)
+
+        pos_hits += sum(2 for phrase in POSITIVE_NEWS_PHRASES if phrase in text)
+        neg_hits += sum(2 for phrase in NEGATIVE_NEWS_PHRASES if phrase in text)
+
+        if pos_hits == 0 and neg_hits == 0:
+            continue
+        denom = pos_hits + neg_hits
+        if denom <= 0:
+            continue
+        scored_items += 1
+        score_total += (pos_hits - neg_hits) / denom
+
+    if scored_items == 0:
+        return 0.0, min(len(items), 12)
+
+    avg_score = max(-1.0, min(1.0, score_total / scored_items))
+    return avg_score, min(len(items), 12)
+
+
+def _extract_next_earnings_date(raw_calendar: Any) -> date | None:
+    if raw_calendar is None:
+        return None
+
+    # yfinance calendar can be a dict-like, DataFrame-like, or scalar object.
+    if isinstance(raw_calendar, dict):
+        for key in ("Earnings Date", "EarningsDate", "earningsDate"):
+            if key in raw_calendar:
+                return _extract_next_earnings_date(raw_calendar.get(key))
+
+    if isinstance(raw_calendar, (list, tuple)):
+        for val in raw_calendar:
+            parsed = _extract_next_earnings_date(val)
+            if parsed is not None:
+                return parsed
+        return None
+
+    # Try pandas-like values without importing pandas directly.
+    if hasattr(raw_calendar, "iloc"):
+        try:
+            first_val = raw_calendar.iloc[0]  # type: ignore[attr-defined]
+            return _extract_next_earnings_date(first_val)
+        except Exception:
+            return None
+
+    if isinstance(raw_calendar, datetime):
+        return raw_calendar.date()
+
+    if isinstance(raw_calendar, date):
+        return raw_calendar
+
+    if isinstance(raw_calendar, str):
+        txt = raw_calendar.strip()
+        if not txt:
+            return None
+        for parser in (datetime.fromisoformat,):
+            try:
+                return parser(txt).date()
+            except ValueError:
+                continue
+        return None
+
+    return None
+
+
+@lru_cache(maxsize=256)
+def _next_earnings_date(ticker: str) -> date | None:
+    try:
+        t = yf.Ticker(ticker)
+        calendar = getattr(t, "calendar", None)
+        return _extract_next_earnings_date(calendar)
+    except Exception:
+        return None
+
+
+def _earnings_signal(ticker: str, category: str) -> tuple[float, date | None, int | None]:
+    """Return proximity bonus and next earnings details for stocks only."""
+    if category != "Stock":
+        return 0.0, None, None
+
+    next_date = _next_earnings_date(ticker)
+    if next_date is None:
+        return 0.0, None, None
+
+    days_to = (next_date - datetime.now(UTC).date()).days
+    if days_to < 0:
+        return 0.0, next_date, days_to
+    if days_to <= 21:
+        return (21 - days_to) / 21.0, next_date, days_to
+    if days_to <= 45:
+        return (45 - days_to) / 90.0, next_date, days_to
+    return 0.0, next_date, days_to
+
+
+@lru_cache(maxsize=256)
+def _candidate_components(
+    ticker: str,
+    category: str,
+) -> tuple[float, float, float, float, float | None, float, float, int, str | None, int | None, float]:
     """
     Return score components as:
-    (composite_score, momentum_3m_pct, avg_dollar_volume_3m, liquidity_log10, expense_ratio_pct, expense_penalty)
+    (
+        composite_score,
+        momentum_3m_pct,
+        avg_dollar_volume_3m,
+        liquidity_log10,
+        expense_ratio_pct,
+        expense_penalty,
+        news_sentiment_score,
+        news_story_count,
+        next_earnings_date,
+        days_to_next_earnings,
+        earnings_proximity_bonus,
+    )
     """
     momentum_pct = _three_month_momentum(ticker) * 100.0
     avg_dollar_volume = _avg_dollar_volume_3m(ticker)
@@ -185,8 +350,30 @@ def _candidate_components(ticker: str) -> tuple[float, float, float, float, floa
     expense = _expense_ratio(ticker)
     expense_pct = (expense * 100.0) if expense is not None else None
     expense_penalty = expense_pct if expense_pct is not None else 0.25
-    score = (0.65 * momentum_pct) + (0.35 * liquidity_log10) - (0.5 * expense_penalty)
-    return score, momentum_pct, avg_dollar_volume, liquidity_log10, expense_pct, expense_penalty
+    news_sentiment_score, news_story_count = _news_signal(ticker)
+    earnings_bonus, next_earnings_date, days_to_next_earnings = _earnings_signal(ticker, category)
+
+    score = (
+        (0.62 * momentum_pct)
+        + (0.30 * liquidity_log10)
+        - (0.45 * expense_penalty)
+        + (2.2 * news_sentiment_score)
+        + (1.8 * earnings_bonus)
+    )
+
+    return (
+        score,
+        momentum_pct,
+        avg_dollar_volume,
+        liquidity_log10,
+        expense_pct,
+        expense_penalty,
+        news_sentiment_score,
+        news_story_count,
+        next_earnings_date.isoformat() if next_earnings_date is not None else None,
+        days_to_next_earnings,
+        earnings_bonus,
+    )
 
 
 @lru_cache(maxsize=128)
@@ -261,14 +448,14 @@ def generate_recommendations(summary: PortfolioSummary) -> RecommendationRespons
         candidates = SECTOR_CATALOGUE.get(sector, [])
         ranked_candidates = sorted(
             candidates,
-            key=lambda item: _candidate_components(item[0])[0],
+            key=lambda item: _candidate_components(item[0], item[2])[0],
             reverse=True,
         )
 
         # Apply minimum score threshold for all candidate picks.
         eligible_candidates = [
             item for item in ranked_candidates
-            if _candidate_components(item[0])[0] >= MIN_RECOMMENDATION_SCORE
+            if _candidate_components(item[0], item[2])[0] >= MIN_RECOMMENDATION_SCORE
         ]
 
         eligible_stock_candidates = [
@@ -292,7 +479,19 @@ def generate_recommendations(summary: PortfolioSummary) -> RecommendationRespons
                 return False
             seen_tickers.add(ticker)
             ytd = _ytd_return(ticker)
-            score, momentum_pct, avg_dollar_volume, liquidity_log10, expense_pct, expense_penalty = _candidate_components(ticker)
+            (
+                score,
+                momentum_pct,
+                avg_dollar_volume,
+                liquidity_log10,
+                expense_pct,
+                expense_penalty,
+                news_sentiment_score,
+                news_story_count,
+                next_earnings_date,
+                days_to_next_earnings,
+                earnings_proximity_bonus,
+            ) = _candidate_components(ticker, category)
             recommendations.append(
                 Recommendation(
                     ticker=ticker,
@@ -307,6 +506,11 @@ def generate_recommendations(summary: PortfolioSummary) -> RecommendationRespons
                     liquidity_log10=round(liquidity_log10, 3),
                     expense_ratio_pct=round(expense_pct, 3) if expense_pct is not None else None,
                     expense_penalty=round(expense_penalty, 3),
+                    news_sentiment_score=round(news_sentiment_score, 3),
+                    news_story_count=news_story_count,
+                    next_earnings_date=next_earnings_date,
+                    days_to_next_earnings=days_to_next_earnings,
+                    earnings_proximity_bonus=round(earnings_proximity_bonus, 3),
                 )
             )
             return True

@@ -5,6 +5,7 @@ import type {
   PortfolioSnapshotListItem,
   PortfolioSummary,
   RecommendationResponse,
+  MarketOverviewResponse,
   SectorETFReturn,
   SnapshotDeleteResponse,
 } from "./types";
@@ -81,4 +82,7 @@ export const api = {
     del<SnapshotDeleteResponse>(`/api/portfolio/history/${snapshotId}`),
 
   getSectorReturns: () => get<SectorETFReturn[]>("/api/market/sectors"),
+
+  getMarketOverview: (limit = 15) =>
+    get<MarketOverviewResponse>(`/api/market/overview?limit=${limit}`),
 };

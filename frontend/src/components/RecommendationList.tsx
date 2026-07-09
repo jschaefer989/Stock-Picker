@@ -41,6 +41,7 @@ export default function RecommendationList({ data }: Props) {
   const fmtFixed = (v: unknown, digits: number) => (isNum(v) ? v.toFixed(digits) : "N/A");
   const fmtPct = (v: unknown, digits: number) => (isNum(v) ? `${v.toFixed(digits)}%` : "N/A");
   const fmtMoneyCompact = (v: unknown) => (isNum(v) ? `$${fmtVolume(v)}` : "N/A");
+  const sentimentLabel = (v: number) => (v > 0.2 ? "Positive" : v < -0.2 ? "Negative" : "Neutral");
 
   const filteredRecommendations = useMemo(() => {
     if (filter === "all") return data.recommendations;
@@ -141,6 +142,26 @@ export default function RecommendationList({ data }: Props) {
                     <span>Expense Ratio</span>
                     <span className="text-right font-medium">
                       {fmtPct(rec.expense_ratio_pct, 3)}
+                    </span>
+
+                    <span>News Sentiment</span>
+                    <span className="text-right font-medium">
+                      {sentimentLabel(rec.news_sentiment_score)} ({fmtFixed(rec.news_sentiment_score, 2)})
+                    </span>
+
+                    <span>Stories Scanned</span>
+                    <span className="text-right font-medium">{rec.news_story_count}</span>
+
+                    <span>Earnings Event Boost</span>
+                    <span className="text-right font-medium">{fmtFixed(rec.earnings_proximity_bonus, 2)}</span>
+
+                    <span>Next Earnings</span>
+                    <span className="text-right font-medium">
+                      {rec.next_earnings_date
+                        ? `${new Date(rec.next_earnings_date).toLocaleDateString()}${
+                            rec.days_to_next_earnings !== null ? ` (${rec.days_to_next_earnings}d)` : ""
+                          }`
+                        : "N/A"}
                     </span>
                   </div>
                 </div>

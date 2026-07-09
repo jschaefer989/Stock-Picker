@@ -14,7 +14,7 @@ from typing import Any, Optional, cast
 
 import yfinance as yf  # type: ignore[import-untyped]
 
-from models import HoldingIn, PortfolioSummary, SectorWeight, StockExposure
+from models import CompositeStockExposure, HoldingIn, PortfolioSummary, SectorWeight, StockExposure
 
 logger = logging.getLogger(__name__)
 
@@ -106,6 +106,66 @@ def _stock_name(ticker: str, info: dict[str, Any]) -> str:
     return ticker
 
 
+@lru_cache(maxsize=256)
+def _fetch_fund_top_holdings(ticker: str) -> list[tuple[str, str, float]]:
+    """Return top holdings as (symbol, name, weight_0_to_1) for a fund."""
+    try:
+        t = yf.Ticker(ticker)
+        top = t.funds_data.top_holdings
+        if top is None or not hasattr(top, "iterrows"):
+            return []
+
+        rows: list[tuple[str, str, float]] = []
+        for symbol, row in top.iterrows():
+            name = (
+                row.get("Name")
+                if hasattr(row, "get")
+                else None
+            ) or (
+                row.get("holdingName")
+                if hasattr(row, "get")
+                else None
+            ) or symbol
+
+            raw_pct = None
+            if hasattr(row, "get"):
+                raw_pct = (
+                    row.get("Holding Percent")
+                    or row.get("Holding_Percent")
+                    or row.get("HoldingPercent")
+                    or row.get("holdingPercent")
+                    or row.get("Weight")
+                )
+
+            if raw_pct is None and hasattr(row, "items"):
+                # Fallback for unnamed numeric columns from some data providers.
+                for _, v in row.items():
+                    if isinstance(v, (int, float)):
+                        raw_pct = v
+                        break
+
+            if not isinstance(symbol, str) or not symbol:
+                continue
+            if not isinstance(name, str) or not name:
+                name = symbol
+            if not isinstance(raw_pct, (int, float)):
+                continue
+
+            pct = float(raw_pct)
+            # Some providers return 6.5 for 6.5% while others return 0.065.
+            if pct > 1.0:
+                pct = pct / 100.0
+            if pct <= 0:
+                continue
+
+            rows.append((symbol.upper(), name, min(pct, 1.0)))
+
+        return rows
+    except Exception as exc:
+        logger.warning("Top holdings fetch failed for %s: %s", ticker, exc)
+        return []
+
+
 def analyse_portfolio(holdings: list[HoldingIn]) -> PortfolioSummary:
     """
     Compute portfolio-level sector weights and top stock exposures.
@@ -118,6 +178,9 @@ def analyse_portfolio(holdings: list[HoldingIn]) -> PortfolioSummary:
     sector_dollars: dict[str, float] = {}
     # {ticker: (name, dollar_exposure)}
     stock_dollars: dict[str, tuple[str, float]] = {}
+    direct_stock_dollars: dict[str, tuple[str, float]] = {}
+    fund_lookthrough_dollars: dict[str, tuple[str, float]] = {}
+    source_funds_by_stock: dict[str, set[str]] = {}
 
     for holding in holdings:
         ticker = holding.ticker.upper()
@@ -126,7 +189,8 @@ def analyse_portfolio(holdings: list[HoldingIn]) -> PortfolioSummary:
             sector = _stock_sector(info) or "Unknown"
             name = _stock_name(ticker, info)
             sector_dollars[sector] = sector_dollars.get(sector, 0.0) + holding.value
-            stock_dollars[ticker] = (name, stock_dollars.get(ticker, ("", 0.0))[1] + holding.value)
+            stock_dollars[ticker] = (name, stock_dollars.get(ticker, (name, 0.0))[1] + holding.value)
+            direct_stock_dollars[ticker] = (name, direct_stock_dollars.get(ticker, (name, 0.0))[1] + holding.value)
         else:
             # ETF or mutual fund – use sector weightings
             raw_sectors = _fetch_fund_sectors(ticker)
@@ -136,28 +200,29 @@ def analyse_portfolio(holdings: list[HoldingIn]) -> PortfolioSummary:
                     sector_dollars[sec] = (
                         sector_dollars.get(sec, 0.0) + holding.value * sec_weight
                     )
-                # Also surface top holdings as stock exposures
-                try:
-                    t = yf.Ticker(ticker)
-                    top = t.funds_data.top_holdings
-                    if top is not None:
-                        for row in (top.itertuples() if hasattr(top, "itertuples") else []):
-                            stk = getattr(row, "Symbol", None) or getattr(row, "Index", None)
-                            stk_name = getattr(row, "holdingName", stk) or stk
-                            stk_pct = getattr(row, "Holding_Percent", 0.0) or 0.0
-                            if isinstance(stk, str) and stk:
-                                resolved_name = stk_name if isinstance(stk_name, str) else stk
-                                prev = stock_dollars.get(stk, (resolved_name, 0.0))
-                                stock_dollars[stk] = (
-                                    prev[0],
-                                    prev[1] + holding.value * float(cast(float, stk_pct)),
-                                )
-                except Exception:
-                    pass
             else:
                 # Fallback: treat whole fund as its declared sector or "Diversified"
                 sec = _stock_sector(info) or "Diversified"
                 sector_dollars[sec] = sector_dollars.get(sec, 0.0) + holding.value
+
+            # Surface fund constituent look-through regardless of sector-data availability.
+            top_rows = _fetch_fund_top_holdings(ticker)
+            for stk, stk_name, stk_pct in top_rows:
+                exposure = holding.value * float(cast(float, stk_pct))
+                if exposure <= 0:
+                    continue
+
+                prev_total = stock_dollars.get(stk, (stk_name, 0.0))
+                stock_dollars[stk] = (prev_total[0], prev_total[1] + exposure)
+
+                prev_lookthrough = fund_lookthrough_dollars.get(stk, (stk_name, 0.0))
+                fund_lookthrough_dollars[stk] = (prev_lookthrough[0], prev_lookthrough[1] + exposure)
+
+                sources = source_funds_by_stock.get(stk)
+                if sources is None:
+                    sources = set()
+                    source_funds_by_stock[stk] = sources
+                sources.add(ticker)
 
     sector_weights = [
         SectorWeight(
@@ -181,8 +246,35 @@ def analyse_portfolio(holdings: list[HoldingIn]) -> PortfolioSummary:
         key=lambda x: -x.weight_pct,
     )[:20]
 
+    composite_stocks = sorted(
+        [
+            CompositeStockExposure(
+                ticker=tkr,
+                name=stock_dollars[tkr][0],
+                total_weight_pct=round(total_dollars / total_value * 100, 2),
+                direct_weight_pct=round((direct_stock_dollars.get(tkr, ("", 0.0))[1] / total_value) * 100, 2),
+                fund_lookthrough_weight_pct=round((fund_lookthrough_dollars.get(tkr, ("", 0.0))[1] / total_value) * 100, 2),
+                source_fund_count=len(source_funds_by_stock.get(tkr, set())),
+            )
+            for tkr, (_, total_dollars) in stock_dollars.items()
+            if total_dollars > 0
+        ],
+        key=lambda x: -x.total_weight_pct,
+    )[:30]
+
+    overlap_stocks = sorted(
+        [
+            s
+            for s in composite_stocks
+            if s.direct_weight_pct > 0 and s.fund_lookthrough_weight_pct > 0
+        ],
+        key=lambda x: -x.total_weight_pct,
+    )[:15]
+
     return PortfolioSummary(
         total_value=total_value,
         sector_weights=sector_weights,
         top_stocks=top_stocks,
+        composite_stocks=composite_stocks,
+        overlap_stocks=overlap_stocks,
     )

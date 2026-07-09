@@ -128,6 +128,80 @@ export default function SectorSummary({ summary }: Props) {
       </div>
 
       {/* Top stocks */}
+      {summary.overlap_stocks.length > 0 && (
+        <div className="rounded-xl border border-amber-200 dark:border-amber-800 p-4 bg-amber-50/30 dark:bg-amber-950/20">
+          <h3 className="mb-2 text-sm font-semibold text-amber-800 dark:text-amber-300">
+            Overlap Watch: Stocks You Own Directly And Through Funds
+          </h3>
+          <p className="mb-3 text-xs text-amber-700/90 dark:text-amber-300/80">
+            These are potential &quot;avoid adding more&quot; names because they are already concentrated across your portfolio.
+          </p>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="text-xs text-amber-700 dark:text-amber-300 uppercase">
+                <tr>
+                  <th className="text-left pb-2">Ticker</th>
+                  <th className="text-right pb-2">Total</th>
+                  <th className="text-right pb-2">Direct</th>
+                  <th className="text-right pb-2">Via Funds</th>
+                  <th className="text-right pb-2">Fund Count</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-amber-100 dark:divide-amber-900/60">
+                {summary.overlap_stocks.slice(0, 10).map((s) => (
+                  <tr key={s.ticker}>
+                    <td className="py-1.5">
+                      <p className="font-semibold text-gray-900 dark:text-gray-100">{s.ticker}</p>
+                      <p className="text-xs text-gray-600 dark:text-gray-400 truncate">{s.name}</p>
+                    </td>
+                    <td className="py-1.5 text-right font-mono font-semibold">{s.total_weight_pct.toFixed(2)}%</td>
+                    <td className="py-1.5 text-right font-mono">{s.direct_weight_pct.toFixed(2)}%</td>
+                    <td className="py-1.5 text-right font-mono">{s.fund_lookthrough_weight_pct.toFixed(2)}%</td>
+                    <td className="py-1.5 text-right font-mono">{s.source_fund_count}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {summary.composite_stocks.length > 0 && (
+        <div className="rounded-xl border border-gray-200 dark:border-gray-700 p-4">
+          <h3 className="mb-2 text-sm font-semibold text-gray-700 dark:text-gray-300">Composite Stock Exposure (Look-Through)</h3>
+          <p className="mb-3 text-xs text-gray-500 dark:text-gray-400">
+            Combines direct stock positions and estimated top holdings inside your ETFs / mutual funds.
+          </p>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="text-xs text-gray-500 uppercase">
+                <tr>
+                  <th className="text-left pb-2">Ticker</th>
+                  <th className="text-right pb-2">Total</th>
+                  <th className="text-right pb-2">Direct</th>
+                  <th className="text-right pb-2">Via Funds</th>
+                  <th className="text-right pb-2">Fund Count</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
+                {summary.composite_stocks.slice(0, 20).map((s) => (
+                  <tr key={s.ticker}>
+                    <td className="py-1.5">
+                      <p className="font-semibold text-gray-900 dark:text-gray-100">{s.ticker}</p>
+                      <p className="text-xs text-gray-600 dark:text-gray-400 truncate">{s.name}</p>
+                    </td>
+                    <td className="py-1.5 text-right font-mono font-semibold">{s.total_weight_pct.toFixed(2)}%</td>
+                    <td className="py-1.5 text-right font-mono">{s.direct_weight_pct.toFixed(2)}%</td>
+                    <td className="py-1.5 text-right font-mono">{s.fund_lookthrough_weight_pct.toFixed(2)}%</td>
+                    <td className="py-1.5 text-right font-mono">{s.source_fund_count}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       {summary.top_stocks.length > 0 && (
         <div className="rounded-xl border border-gray-200 dark:border-gray-700 p-4">
           <h3 className="mb-3 text-sm font-semibold text-gray-700 dark:text-gray-300">Top Individual Stock Exposures</h3>

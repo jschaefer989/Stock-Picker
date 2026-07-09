@@ -46,10 +46,21 @@ class StockExposure(BaseModel):
     weight_pct: float  # 0-100
 
 
+class CompositeStockExposure(BaseModel):
+    ticker: str
+    name: str
+    total_weight_pct: float  # 0-100
+    direct_weight_pct: float  # 0-100
+    fund_lookthrough_weight_pct: float  # 0-100
+    source_fund_count: int
+
+
 class PortfolioSummary(BaseModel):
     total_value: float
     sector_weights: list[SectorWeight]
     top_stocks: list[StockExposure]
+    composite_stocks: list[CompositeStockExposure] = Field(default_factory=list)
+    overlap_stocks: list[CompositeStockExposure] = Field(default_factory=list)
 
 
 class Recommendation(BaseModel):
@@ -65,6 +76,11 @@ class Recommendation(BaseModel):
     liquidity_log10: float
     expense_ratio_pct: Optional[float] = None
     expense_penalty: float
+    news_sentiment_score: float
+    news_story_count: int
+    next_earnings_date: Optional[str] = None
+    days_to_next_earnings: Optional[int] = None
+    earnings_proximity_bonus: float
 
 
 class RecommendationResponse(BaseModel):

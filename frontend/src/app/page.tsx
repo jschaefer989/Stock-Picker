@@ -10,6 +10,8 @@ import MarketOverview from "@/components/MarketOverview";
 import { api } from "@/lib/api";
 import type {
   HoldingIn,
+  MarketIndexReturn,
+  MarketStory,
   PortfolioSnapshotListItem,
   PortfolioSummary,
   RecommendationResponse,
@@ -26,6 +28,8 @@ export default function Home() {
   const [summary, setSummary] = useState<PortfolioSummary | null>(null);
   const [recs, setRecs] = useState<RecommendationResponse | null>(null);
   const [market, setMarket] = useState<SectorETFReturn[] | null>(null);
+  const [marketIndexes, setMarketIndexes] = useState<MarketIndexReturn[]>([]);
+  const [marketStories, setMarketStories] = useState<MarketStory[]>([]);
   const [currentHoldings, setCurrentHoldings] = useState<HoldingIn[]>([]);
   const [history, setHistory] = useState<PortfolioSnapshotListItem[]>([]);
   const [saveStatus, setSaveStatus] = useState<string | null>(null);
@@ -51,7 +55,10 @@ export default function Home() {
   };
 
   useEffect(() => {
-    void loadHistory();
+    const timer = setTimeout(() => {
+      void loadHistory();
+    }, 0);
+    return () => clearTimeout(timer);
   }, []);
 
   const handleAnalyse = async (holdings: HoldingIn[]) => {
@@ -62,12 +69,14 @@ export default function Home() {
       const [s, r, m] = await Promise.all([
         api.analysePortfolio(portfolio),
         api.getRecommendations(portfolio),
-        api.getSectorReturns(),
+        api.getMarketOverview(),
       ]);
       setCurrentHoldings(holdings);
       setSummary(s);
       setRecs(r);
-      setMarket(m);
+      setMarket(m.sectors);
+      setMarketIndexes(m.indexes);
+      setMarketStories(m.stories);
       setTab("summary");
       setSaveStatus(null);
     } catch (err) {
@@ -98,12 +107,14 @@ export default function Home() {
     try {
       const [snapshot, m] = await Promise.all([
         api.getPortfolioSnapshot(snapshotId),
-        api.getSectorReturns(),
+        api.getMarketOverview(),
       ]);
       setCurrentHoldings(snapshot.holdings);
       setSummary(snapshot.summary);
       setRecs(snapshot.recommendations);
-      setMarket(m);
+      setMarket(m.sectors);
+      setMarketIndexes(m.indexes);
+      setMarketStories(m.stories);
       setTab("summary");
       setSaveStatus(`Loaded snapshot #${snapshot.id}.`);
     } catch (err) {
@@ -233,7 +244,9 @@ export default function Home() {
             <div className="p-6">
               {tab === "summary" && summary && <SectorSummary summary={summary} />}
               {tab === "recommendations" && recs && <RecommendationList data={recs} />}
-              {tab === "market" && market && <MarketOverview data={market} />}
+              {tab === "market" && market && (
+                <MarketOverview indexes={marketIndexes} sectors={market} stories={marketStories} />
+              )}
             </div>
           </section>
         )}
