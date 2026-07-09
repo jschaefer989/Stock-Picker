@@ -1,0 +1,27 @@
+# Python environments and caches
+.venv/
+**/.venv/
+__pycache__/
+**/__pycache__/
+.mypy_cache/
+**/.mypy_cache/
+*.pyc
+
+# Local databases and runtime artifacts
+*.db
+*.sqlite3
+
+# Node/Next build artifacts
+node_modules/
+**/node_modules/
+.next/
+**/.next/
+*.tsbuildinfo
+
+# Local environment files
+.env
+.env.*
+!.env.example
+
+# Editor metadata
+.vscode/
