@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { BarChart2, TrendingUp, AlertCircle, Save, History, Pencil, Trash2, FolderOpen } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import { BarChart2, TrendingUp, AlertCircle, Save, History, Pencil, Trash2, FolderOpen, HelpCircle } from "lucide-react";
 
 import PortfolioForm from "@/components/PortfolioForm";
 import SectorSummary from "@/components/SectorSummary";
 import RecommendationList from "@/components/RecommendationList";
 import MarketOverview from "@/components/MarketOverview";
+import HelpModal from "@/components/HelpModal";
 import { api } from "@/lib/api";
 import type {
   HoldingIn,
@@ -24,6 +25,7 @@ export default function Home() {
   const [tab, setTab] = useState<Tab>("summary");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [helpOpen, setHelpOpen] = useState(false);
 
   const [summary, setSummary] = useState<PortfolioSummary | null>(null);
   const [recs, setRecs] = useState<RecommendationResponse | null>(null);
@@ -38,6 +40,19 @@ export default function Home() {
   const [renamingId, setRenamingId] = useState<number | null>(null);
   const [renameValue, setRenameValue] = useState<string>("");
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
+
+  // F1 opens the help modal
+  const handleGlobalKey = useCallback((e: KeyboardEvent) => {
+    if (e.key === "F1") {
+      e.preventDefault();
+      setHelpOpen((prev) => !prev);
+    }
+  }, []);
+
+  useEffect(() => {
+    window.addEventListener("keydown", handleGlobalKey);
+    return () => window.removeEventListener("keydown", handleGlobalKey);
+  }, [handleGlobalKey]);
 
   const currencyFmt = new Intl.NumberFormat("en-US", {
     style: "currency",
@@ -173,12 +188,23 @@ export default function Home() {
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-950 text-gray-900 dark:text-gray-100">
+      <HelpModal open={helpOpen} onClose={() => setHelpOpen(false)} />
+
       {/* Header */}
       <header className="border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 px-6 py-4">
         <div className="max-w-6xl mx-auto flex items-center gap-3">
           <TrendingUp className="h-6 w-6 text-blue-600" />
           <h1 className="text-xl font-bold">Stock Picker</h1>
           <span className="text-xs text-gray-500 ml-auto">Portfolio Diversification Assistant</span>
+          <button
+            onClick={() => setHelpOpen(true)}
+            aria-label="Open help (F1)"
+            title="Help (F1)"
+            className="flex items-center gap-1.5 rounded-lg border border-gray-200 dark:border-gray-700 px-2.5 py-1.5 text-xs text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:border-gray-400 dark:hover:border-gray-500 transition-colors"
+          >
+            <HelpCircle className="h-3.5 w-3.5" />
+            Help
+          </button>
         </div>
       </header>
 
