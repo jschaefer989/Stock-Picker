@@ -86,6 +86,7 @@ class Recommendation(BaseModel):
 class RecommendationResponse(BaseModel):
     underweight_sectors: list[str]
     recommendations: list[Recommendation]
+    opportunistic_recommendations: list[Recommendation] = Field(default_factory=list)
 
 
 class PortfolioSnapshotListItem(BaseModel):

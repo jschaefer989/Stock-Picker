@@ -67,6 +67,7 @@ export interface Recommendation {
 export interface RecommendationResponse {
   underweight_sectors: string[];
   recommendations: Recommendation[];
+  opportunistic_recommendations: Recommendation[];
 }
 
 export interface PortfolioSnapshotListItem {

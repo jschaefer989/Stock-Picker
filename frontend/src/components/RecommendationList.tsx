@@ -9,6 +9,7 @@ interface Props {
 }
 
 type RecommendationFilter = "all" | "funds" | "stocks";
+type RecommendationLens = "both" | "diversification" | "opportunistic";
 
 function ReturnBadge({ pct }: { pct: number | null }) {
   if (pct === null) return <span className="text-gray-400 text-xs">N/A</span>;
@@ -30,6 +31,7 @@ function ReturnBadge({ pct }: { pct: number | null }) {
 
 export default function RecommendationList({ data }: Props) {
   const [filter, setFilter] = useState<RecommendationFilter>("all");
+  const [lens, setLens] = useState<RecommendationLens>("both");
 
   const fmtVolume = (v: number) =>
     new Intl.NumberFormat("en-US", {
@@ -51,10 +53,28 @@ export default function RecommendationList({ data }: Props) {
     return data.recommendations.filter((rec) => rec.category !== "Stock");
   }, [data.recommendations, filter]);
 
+  const filteredOpportunistic = useMemo(() => {
+    if (filter === "all") return data.opportunistic_recommendations;
+    if (filter === "stocks") {
+      return data.opportunistic_recommendations.filter((rec) => rec.category === "Stock");
+    }
+    return data.opportunistic_recommendations.filter((rec) => rec.category !== "Stock");
+  }, [data.opportunistic_recommendations, filter]);
+
+  const diversificationVisible = lens === "opportunistic" ? [] : filteredRecommendations;
+  const opportunisticVisible = lens === "diversification" ? [] : filteredOpportunistic;
+
   const filterBtnClass = (value: RecommendationFilter) =>
     `rounded-full px-3 py-1 text-xs font-semibold transition-colors ${
       filter === value
         ? "bg-blue-600 text-white"
+        : "bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700"
+    }`;
+
+  const lensBtnClass = (value: RecommendationLens) =>
+    `rounded-full px-3 py-1 text-xs font-semibold transition-colors ${
+      lens === value
+        ? "bg-cyan-600 text-white"
         : "bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700"
     }`;
 
@@ -91,13 +111,34 @@ export default function RecommendationList({ data }: Props) {
             <button type="button" className={filterBtnClass("stocks")} onClick={() => setFilter("stocks")}>Stocks</button>
           </div>
         </div>
-        {filteredRecommendations.length === 0 ? (
+        <div className="mb-4 rounded-lg border border-gray-200 dark:border-gray-700 p-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-xs font-semibold text-gray-700 dark:text-gray-300">
+              Recommendation Lens
+            </p>
+            <div className="flex items-center gap-2">
+              <button type="button" className={lensBtnClass("both")} onClick={() => setLens("both")}>Both</button>
+              <button type="button" className={lensBtnClass("diversification")} onClick={() => setLens("diversification")}>Diversification Only</button>
+              <button type="button" className={lensBtnClass("opportunistic")} onClick={() => setLens("opportunistic")}>Opportunistic Only</button>
+            </div>
+          </div>
+          <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-[11px] text-gray-500 dark:text-gray-400">
+            <span>
+              Showing {diversificationVisible.length} diversification picks
+            </span>
+            <span>
+              Showing {opportunisticVisible.length} opportunistic picks
+            </span>
+          </div>
+        </div>
+
+        {diversificationVisible.length === 0 ? (
           <p className="text-sm text-gray-500">
             No recommendations match the selected filter.
           </p>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {filteredRecommendations.map((rec) => (
+            {diversificationVisible.map((rec) => (
               <div
                 key={rec.ticker}
                 className="rounded-xl border border-gray-200 dark:border-gray-700 p-4 hover:shadow-md transition-shadow"
@@ -170,6 +211,64 @@ export default function RecommendationList({ data }: Props) {
                   {rec.sectors_covered.map((s) => (
                     <span
                       key={s}
+                      className="rounded-full bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 text-xs px-2 py-0.5"
+                    >
+                      {s}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Opportunistic cards */}
+      <div>
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+          <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300">
+            Opportunistic Picks (Trend and News Driven)
+          </h3>
+          <p className="text-xs text-gray-500 dark:text-gray-400">
+            Includes strong setups even when the sector is not underweight.
+          </p>
+        </div>
+        {opportunisticVisible.length === 0 ? (
+          <p className="text-sm text-gray-500">No opportunistic picks currently pass the signal threshold.</p>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {opportunisticVisible.map((rec) => (
+              <div
+                key={`op-${rec.ticker}`}
+                className="rounded-xl border border-cyan-200 dark:border-cyan-900/50 p-4 hover:shadow-md transition-shadow bg-cyan-50/30 dark:bg-cyan-950/10"
+              >
+                <div className="flex items-start justify-between">
+                  <div>
+                    <span className="inline-block rounded bg-cyan-100 dark:bg-cyan-900/40 text-cyan-700 dark:text-cyan-300 text-xs font-bold px-2 py-0.5 mb-1">
+                      {rec.ticker}
+                    </span>
+                    <p className="text-sm font-semibold text-gray-900 dark:text-white leading-snug">
+                      {rec.name}
+                    </p>
+                  </div>
+                  <span className="rounded-full bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 text-xs px-2 py-0.5 ml-2 flex-shrink-0">
+                    {rec.category}
+                  </span>
+                </div>
+
+                <p className="mt-2 text-xs text-gray-600 dark:text-gray-400">{rec.rationale}</p>
+
+                <div className="mt-3 flex items-center justify-between">
+                  <ReturnBadge pct={rec.ytd_return_pct} />
+                  <span className="rounded-full bg-cyan-100 dark:bg-cyan-900/40 text-cyan-700 dark:text-cyan-300 text-xs px-2 py-0.5 font-semibold">
+                    Rank Score: {fmtFixed(rec.ranking_score, 2)}
+                  </span>
+                </div>
+
+                <div className="mt-2 flex flex-wrap gap-1">
+                  {rec.sectors_covered.map((s) => (
+                    <span
+                      key={`op-sector-${rec.ticker}-${s}`}
                       className="rounded-full bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 text-xs px-2 py-0.5"
                     >
                       {s}
