@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import sys
 from pathlib import Path
 
 from models import (
@@ -13,7 +14,13 @@ from models import (
     RecommendationResponse,
 )
 
-DB_PATH = Path(__file__).resolve().parent.parent / "stock_picker.db"
+# When running as a PyInstaller bundle (sys.frozen == True) the code lives
+# inside a read-only temp directory (_MEIPASS).  Store the database next to
+# the executable instead so user data persists across launches.
+if getattr(sys, "frozen", False):
+    DB_PATH = Path(sys.executable).parent / "stock_picker.db"
+else:
+    DB_PATH = Path(__file__).resolve().parent.parent / "stock_picker.db"
 
 
 def _connect() -> sqlite3.Connection:
