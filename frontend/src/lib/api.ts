@@ -4,6 +4,7 @@ import type {
   PortfolioSnapshot,
   PortfolioSnapshotListItem,
   PortfolioSummary,
+  RecommendationPageResponse,
   RecommendationResponse,
   MarketOverviewResponse,
   SectorETFReturn,
@@ -12,8 +13,16 @@ import type {
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
-async function post<T>(path: string, body: unknown): Promise<T> {
-  const res = await fetch(`${BASE_URL}${path}`, {
+async function post<T>(path: string, body: unknown, query?: Record<string, string | number | undefined | null>): Promise<T> {
+  const url = new URL(`${BASE_URL}${path}`);
+  if (query) {
+    for (const [key, value] of Object.entries(query)) {
+      if (value !== undefined && value !== null && `${value}` !== "") {
+        url.searchParams.set(key, `${value}`);
+      }
+    }
+  }
+  const res = await fetch(url.toString(), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -65,6 +74,24 @@ export const api = {
 
   getRecommendations: (portfolio: PortfolioIn) =>
     post<RecommendationResponse>("/api/portfolio/recommend", portfolio),
+
+  getRecommendationPage: (
+    portfolio: PortfolioIn,
+    params: {
+      section: "diversification" | "opportunistic";
+      assetType: "all" | "funds" | "stocks";
+      maxPrice: number | null;
+      offset: number;
+      limit?: number;
+    },
+  ) =>
+    post<RecommendationPageResponse>("/api/portfolio/recommend/page", portfolio, {
+      section: params.section,
+      asset_type: params.assetType,
+      max_price: params.maxPrice,
+      offset: params.offset,
+      limit: params.limit ?? 6,
+    }),
 
   savePortfolioSnapshot: (payload: PortfolioSaveRequest) =>
     post<PortfolioSnapshotListItem>("/api/portfolio/save", payload),

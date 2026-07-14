@@ -15,11 +15,11 @@ import logging
 import math
 import re
 from functools import lru_cache
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import yfinance as yf  # type: ignore[import-untyped]
 
-from models import PortfolioSummary, Recommendation, RecommendationResponse
+from models import PortfolioSummary, Recommendation, RecommendationPageResponse, RecommendationResponse
 
 logger = logging.getLogger(__name__)
 
@@ -214,6 +214,29 @@ def _expense_ratio(ticker: str) -> float | None:
     return None
 
 
+@lru_cache(maxsize=256)
+def _current_price(ticker: str) -> float | None:
+    """Return the latest available market price for a ticker."""
+    info = _ticker_info(ticker)
+    for key in ("regularMarketPrice", "currentPrice", "previousClose"):
+        raw = info.get(key)
+        if isinstance(raw, (int, float)):
+            price = float(raw)
+            if price > 0:
+                return price
+
+    try:
+        hist = yf.Ticker(ticker).history(period="5d")
+        if hist.empty:
+            return None
+        close = hist["Close"].iloc[-1]
+        if isinstance(close, (int, float)) and float(close) > 0:
+            return float(close)
+    except Exception:
+        return None
+    return None
+
+
 @lru_cache(maxsize=128)
 def _fund_top_holdings(ticker: str) -> list[tuple[str, str, float]]:
     """Return top holdings for a fund as (symbol, name, weight_0_to_1)."""
@@ -372,7 +395,7 @@ def _extract_next_earnings_date(raw_calendar: Any) -> date | None:
     # Try pandas-like values without importing pandas directly.
     if hasattr(raw_calendar, "iloc"):
         try:
-            first_val = raw_calendar.iloc[0]  # type: ignore[attr-defined]
+            first_val = raw_calendar.iloc[0]
             return _extract_next_earnings_date(first_val)
         except Exception:
             return None
@@ -526,6 +549,51 @@ def _sector_momentum(sector: str) -> float:
         return 0.0
 
 
+def _build_recommendation_payload(
+    ticker: str,
+    name: str,
+    category: str,
+    rationale: str,
+    sectors: list[str],
+    score_adjustment: float = 0.0,
+    rationale_override: str | None = None,
+    ) -> Recommendation:
+    ytd = _ytd_return(ticker)
+    (
+        score,
+        momentum_pct,
+        avg_dollar_volume,
+        liquidity_log10,
+        expense_pct,
+        expense_penalty,
+        news_sentiment_score,
+        news_story_count,
+        next_earnings_date,
+        days_to_next_earnings,
+        earnings_proximity_bonus,
+    ) = _candidate_components(ticker, category)
+    return Recommendation(
+        ticker=ticker,
+        name=name,
+        category=category,
+        rationale=rationale_override or rationale,
+        sectors_covered=sectors,
+        current_price=_current_price(ticker),
+        ytd_return_pct=ytd,
+        ranking_score=round(score + score_adjustment, 3),
+        momentum_3m_pct=round(momentum_pct, 2),
+        avg_dollar_volume_3m=round(avg_dollar_volume, 2),
+        liquidity_log10=round(liquidity_log10, 3),
+        expense_ratio_pct=round(expense_pct, 3) if expense_pct is not None else None,
+        expense_penalty=round(expense_penalty, 3),
+        news_sentiment_score=round(news_sentiment_score, 3),
+        news_story_count=news_story_count,
+        next_earnings_date=next_earnings_date,
+        days_to_next_earnings=days_to_next_earnings,
+        earnings_proximity_bonus=round(earnings_proximity_bonus, 3),
+    )
+
+
 def generate_recommendations(summary: PortfolioSummary) -> RecommendationResponse:
     """
     Given a PortfolioSummary, identify underweight sectors and surface
@@ -557,38 +625,14 @@ def generate_recommendations(summary: PortfolioSummary) -> RecommendationRespons
         score_adjustment: float = 0.0,
         rationale_override: str | None = None,
     ) -> Recommendation:
-        ytd = _ytd_return(ticker)
-        (
-            score,
-            momentum_pct,
-            avg_dollar_volume,
-            liquidity_log10,
-            expense_pct,
-            expense_penalty,
-            news_sentiment_score,
-            news_story_count,
-            next_earnings_date,
-            days_to_next_earnings,
-            earnings_proximity_bonus,
-        ) = _candidate_components(ticker, category)
-        return Recommendation(
-            ticker=ticker,
-            name=name,
-            category=category,
-            rationale=rationale_override or rationale,
-            sectors_covered=sectors,
-            ytd_return_pct=ytd,
-            ranking_score=round(score + score_adjustment, 3),
-            momentum_3m_pct=round(momentum_pct, 2),
-            avg_dollar_volume_3m=round(avg_dollar_volume, 2),
-            liquidity_log10=round(liquidity_log10, 3),
-            expense_ratio_pct=round(expense_pct, 3) if expense_pct is not None else None,
-            expense_penalty=round(expense_penalty, 3),
-            news_sentiment_score=round(news_sentiment_score, 3),
-            news_story_count=news_story_count,
-            next_earnings_date=next_earnings_date,
-            days_to_next_earnings=days_to_next_earnings,
-            earnings_proximity_bonus=round(earnings_proximity_bonus, 3),
+        return _build_recommendation_payload(
+            ticker,
+            name,
+            category,
+            rationale,
+            sectors,
+            score_adjustment=score_adjustment,
+            rationale_override=rationale_override,
         )
 
     for sector in underweight:
@@ -608,11 +652,6 @@ def generate_recommendations(summary: PortfolioSummary) -> RecommendationRespons
         eligible_stock_candidates = [
             item for item in eligible_candidates
             if item[2] == "Stock"
-        ]
-
-        eligible_fund_candidates = [
-            item for item in eligible_candidates
-            if item[2] != "Stock"
         ]
 
         def add_candidate(
@@ -779,4 +818,237 @@ def generate_recommendations(summary: PortfolioSummary) -> RecommendationRespons
         underweight_sectors=underweight,
         recommendations=recommendations,
         opportunistic_recommendations=opportunistic_recommendations,
+    )
+
+
+def _build_diversification_pool(summary: PortfolioSummary) -> tuple[list[str], list[Recommendation]]:
+    present_sectors = {sw.sector: sw.weight_pct for sw in summary.sector_weights}
+    all_expected = list(SECTOR_CATALOGUE.keys())
+
+    underweight: list[str] = []
+    for sector in all_expected:
+        pct = present_sectors.get(sector, 0.0)
+        if pct < UNDERWEIGHT_THRESHOLD_PCT:
+            underweight.append(sector)
+
+    underweight.sort(key=lambda s: -_sector_momentum(s))
+
+    recommendations: list[Recommendation] = []
+    seen_tickers: set[str] = set()
+
+    def add_candidate(
+        ticker: str,
+        name: str,
+        category: str,
+        rationale: str,
+        sectors: list[str],
+    ) -> None:
+        if ticker in seen_tickers:
+            return
+        seen_tickers.add(ticker)
+        recommendations.append(
+            Recommendation(
+                ticker=ticker,
+                name=name,
+                category=category,
+                rationale=rationale,
+                sectors_covered=sectors,
+                current_price=_current_price(ticker),
+                ytd_return_pct=_ytd_return(ticker),
+                ranking_score=0.0,
+                momentum_3m_pct=0.0,
+                avg_dollar_volume_3m=0.0,
+                liquidity_log10=0.0,
+                expense_ratio_pct=None,
+                expense_penalty=0.0,
+                news_sentiment_score=0.0,
+                news_story_count=0,
+                next_earnings_date=None,
+                days_to_next_earnings=None,
+                earnings_proximity_bonus=0.0,
+            )
+        )
+
+    for sector in underweight:
+        candidates = SECTOR_CATALOGUE.get(sector, [])
+        ranked_candidates = sorted(
+            candidates,
+            key=lambda item: _candidate_components(item[0], item[2])[0],
+            reverse=True,
+        )
+        eligible_candidates = [
+            item for item in ranked_candidates
+            if _candidate_components(item[0], item[2])[0] >= MIN_RECOMMENDATION_SCORE
+        ]
+
+        for ticker, name, category, rationale, sectors in eligible_candidates:
+            if ticker in seen_tickers:
+                continue
+            add_candidate(ticker, name, category, rationale, sectors)
+
+    return underweight, recommendations
+
+
+def _build_opportunistic_pool(summary: PortfolioSummary, underweight: list[str]) -> list[Recommendation]:
+    seen_tickers: set[str] = set()
+    opportunistic_pool: list[tuple[int, float, Recommendation]] = []
+
+    for sector, candidates in SECTOR_CATALOGUE.items():
+        sector_momentum_pct = _sector_momentum(sector) * 100.0
+        for ticker, name, category, rationale, sectors in candidates:
+            if ticker in seen_tickers:
+                continue
+
+            (
+                base_score,
+                _momentum_pct,
+                _avg_dollar_volume,
+                _liquidity_log10,
+                _expense_pct,
+                _expense_penalty,
+                news_sentiment_score,
+                _news_story_count,
+                _next_earnings_date,
+                _days_to_next_earnings,
+                _earnings_proximity_bonus,
+            ) = _candidate_components(ticker, category)
+
+            if base_score < MIN_OPPORTUNISTIC_BASE_SCORE:
+                continue
+
+            ytd = _ytd_return(ticker)
+            ytd_pct = ytd if ytd is not None else 0.0
+
+            opportunistic_boost = (0.28 * sector_momentum_pct) + (0.08 * ytd_pct)
+            total_score = base_score + opportunistic_boost
+
+            if total_score < MIN_OPPORTUNISTIC_TOTAL_SCORE:
+                continue
+
+            sentiment_label = (
+                "positive" if news_sentiment_score > 0.2 else
+                "negative" if news_sentiment_score < -0.2 else
+                "mixed"
+            )
+            rationale_override = (
+                f"{rationale}. Opportunistic tailwinds: {sector} sector 3M trend "
+                f"{sector_momentum_pct:+.1f}%, YTD {ytd_pct:+.1f}%, news tone {sentiment_label}."
+            )
+
+            rec = _build_recommendation_payload(
+                ticker,
+                name,
+                category,
+                rationale,
+                sectors,
+                score_adjustment=opportunistic_boost,
+                rationale_override=rationale_override,
+            )
+
+            non_underweight_priority = 1
+            if any(sec in underweight for sec in sectors):
+                non_underweight_priority = 0
+
+            opportunistic_pool.append((non_underweight_priority, total_score, rec))
+            seen_tickers.add(ticker)
+
+    for ticker, name, category, rationale, sectors, fund_count in _dynamic_opportunistic_candidates():
+        if ticker in seen_tickers:
+            continue
+
+        (
+            base_score,
+            _momentum_pct,
+            _avg_dollar_volume,
+            _liquidity_log10,
+            _expense_pct,
+            _expense_penalty,
+            news_sentiment_score,
+            _news_story_count,
+            _next_earnings_date,
+            _days_to_next_earnings,
+            _earnings_proximity_bonus,
+        ) = _candidate_components(ticker, category)
+
+        if base_score < MIN_OPPORTUNISTIC_BASE_SCORE:
+            continue
+
+        ytd = _ytd_return(ticker)
+        ytd_pct = ytd if ytd is not None else 0.0
+        lead_sector = sectors[0] if sectors else "Technology"
+        sector_momentum_pct = _sector_momentum(lead_sector) * 100.0
+        fund_support_bonus = 0.85 * fund_count
+        opportunistic_boost = (0.28 * sector_momentum_pct) + (0.08 * ytd_pct) + fund_support_bonus
+        total_score = base_score + opportunistic_boost
+
+        if total_score < MIN_OPPORTUNISTIC_TOTAL_SCORE:
+            continue
+
+        sentiment_label = (
+            "positive" if news_sentiment_score > 0.2 else
+            "negative" if news_sentiment_score < -0.2 else
+            "mixed"
+        )
+        rationale_override = (
+            f"{rationale} Opportunistic tailwinds: {lead_sector} sector 3M trend {sector_momentum_pct:+.1f}%, "
+            f"YTD {ytd_pct:+.1f}%, news tone {sentiment_label}."
+        )
+
+        rec = _build_recommendation_payload(
+            ticker,
+            name,
+            category,
+            rationale,
+            sectors,
+            score_adjustment=opportunistic_boost,
+            rationale_override=rationale_override,
+        )
+
+        non_underweight_priority = 1
+        if any(sec in underweight for sec in sectors):
+            non_underweight_priority = 0
+
+        opportunistic_pool.append((non_underweight_priority, total_score, rec))
+        seen_tickers.add(ticker)
+
+    opportunistic_pool.sort(key=lambda row: (-row[0], -row[1]))
+    return [rec for _, _, rec in opportunistic_pool]
+
+
+def _filter_recommendation_items(
+    items: list[Recommendation],
+    asset_type: Literal["all", "funds", "stocks"],
+    max_price: float | None,
+) -> list[Recommendation]:
+    filtered = items
+    if asset_type == "funds":
+        filtered = [rec for rec in filtered if rec.category != "Stock"]
+    elif asset_type == "stocks":
+        filtered = [rec for rec in filtered if rec.category == "Stock"]
+
+    if max_price is not None:
+        filtered = [rec for rec in filtered if rec.current_price is not None and rec.current_price <= max_price]
+
+    return filtered
+
+
+def generate_recommendation_page(
+    summary: PortfolioSummary,
+    section: Literal["diversification", "opportunistic"],
+    asset_type: Literal["all", "funds", "stocks"],
+    max_price: float | None,
+    offset: int,
+    limit: int,
+) -> RecommendationPageResponse:
+    underweight, diversification_pool = _build_diversification_pool(summary)
+    opportunistic_pool = _build_opportunistic_pool(summary, underweight)
+    items = diversification_pool if section == "diversification" else opportunistic_pool
+    filtered_items = _filter_recommendation_items(items, asset_type, max_price)
+    start = max(offset, 0)
+    page_items = filtered_items[start : start + max(limit, 1)]
+    has_more = start + len(page_items) < len(filtered_items)
+    return RecommendationPageResponse(
+        underweight_sectors=underweight,
+        items=page_items,
+        has_more=has_more,
     )

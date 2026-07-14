@@ -208,7 +208,7 @@ def analyse_portfolio(holdings: list[HoldingIn]) -> PortfolioSummary:
             # Surface fund constituent look-through regardless of sector-data availability.
             top_rows = _fetch_fund_top_holdings(ticker)
             for stk, stk_name, stk_pct in top_rows:
-                exposure = holding.value * float(cast(float, stk_pct))
+                exposure = holding.value * float(stk_pct)
                 if exposure <= 0:
                     continue
 

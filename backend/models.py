@@ -69,6 +69,7 @@ class Recommendation(BaseModel):
     category: str          # "ETF" | "Mutual Fund" | "Stock"
     rationale: str
     sectors_covered: list[str]
+    current_price: Optional[float] = None
     ytd_return_pct: Optional[float] = None
     ranking_score: float
     momentum_3m_pct: float
@@ -87,6 +88,12 @@ class RecommendationResponse(BaseModel):
     underweight_sectors: list[str]
     recommendations: list[Recommendation]
     opportunistic_recommendations: list[Recommendation] = Field(default_factory=list)
+
+
+class RecommendationPageResponse(BaseModel):
+    underweight_sectors: list[str]
+    items: list[Recommendation]
+    has_more: bool
 
 
 class PortfolioSnapshotListItem(BaseModel):

@@ -50,6 +50,7 @@ export interface Recommendation {
   category: string;
   rationale: string;
   sectors_covered: string[];
+  current_price: number | null;
   ytd_return_pct: number | null;
   ranking_score: number;
   momentum_3m_pct: number;
@@ -68,6 +69,12 @@ export interface RecommendationResponse {
   underweight_sectors: string[];
   recommendations: Recommendation[];
   opportunistic_recommendations: Recommendation[];
+}
+
+export interface RecommendationPageResponse {
+  underweight_sectors: string[];
+  items: Recommendation[];
+  has_more: boolean;
 }
 
 export interface PortfolioSnapshotListItem {

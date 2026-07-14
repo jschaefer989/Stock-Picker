@@ -5,6 +5,7 @@ POST /api/portfolio/analyse   → PortfolioSummary
 POST /api/portfolio/recommend → RecommendationResponse
 """
 from fastapi import APIRouter, HTTPException
+from typing import Literal
 
 from models import (
     PortfolioIn,
@@ -12,12 +13,13 @@ from models import (
     PortfolioSnapshot,
     PortfolioSnapshotListItem,
     PortfolioSummary,
+    RecommendationPageResponse,
     RecommendationResponse,
     SnapshotDeleteResponse,
     SnapshotRenameRequest,
 )
 from services.portfolio_service import analyse_portfolio
-from services.recommendation_service import generate_recommendations
+from services.recommendation_service import generate_recommendation_page, generate_recommendations
 from services.db_service import delete_snapshot, get_snapshot, list_snapshots, rename_snapshot, save_snapshot
 
 router = APIRouter()
@@ -36,6 +38,29 @@ def recommend(portfolio: PortfolioIn) -> RecommendationResponse:
         raise HTTPException(status_code=400, detail="Portfolio must contain at least one holding.")
     summary = analyse_portfolio(portfolio.holdings)
     return generate_recommendations(summary)
+
+
+@router.post("/recommend/page", response_model=RecommendationPageResponse)
+def recommend_page(
+    portfolio: PortfolioIn,
+    section: Literal["diversification", "opportunistic"] = "diversification",
+    asset_type: Literal["all", "funds", "stocks"] = "all",
+    max_price: float | None = None,
+    offset: int = 0,
+    limit: int = 6,
+) -> RecommendationPageResponse:
+    if not portfolio.holdings:
+        raise HTTPException(status_code=400, detail="Portfolio must contain at least one holding.")
+
+    summary = analyse_portfolio(portfolio.holdings)
+    return generate_recommendation_page(
+        summary=summary,
+        section=section,
+        asset_type=asset_type,
+        max_price=max_price,
+        offset=offset,
+        limit=limit,
+    )
 
 
 @router.post("/save", response_model=PortfolioSnapshotListItem)

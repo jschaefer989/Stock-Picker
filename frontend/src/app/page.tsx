@@ -269,7 +269,7 @@ export default function Home() {
             {/* Tab content */}
             <div className="p-6">
               {tab === "summary" && summary && <SectorSummary summary={summary} />}
-              {tab === "recommendations" && recs && <RecommendationList data={recs} />}
+                {tab === "recommendations" && recs && <RecommendationList data={recs} holdings={currentHoldings} />}
               {tab === "market" && market && (
                 <MarketOverview indexes={marketIndexes} sectors={market} stories={marketStories} />
               )}
