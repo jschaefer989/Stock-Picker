@@ -8,6 +8,7 @@ import SectorSummary from "@/components/SectorSummary";
 import RecommendationList from "@/components/RecommendationList";
 import MarketOverview from "@/components/MarketOverview";
 import HelpModal from "@/components/HelpModal";
+import PurchasePlan from "@/components/PurchasePlan";
 import { api } from "@/lib/api";
 import type {
   HoldingIn,
@@ -15,11 +16,14 @@ import type {
   MarketStory,
   PortfolioSnapshotListItem,
   PortfolioSummary,
+  PurchasePlanEvaluationResponse,
+  PurchasePlanLineIn,
+  Recommendation,
   RecommendationResponse,
   SectorETFReturn,
 } from "@/lib/types";
 
-type Tab = "summary" | "recommendations" | "market";
+type Tab = "summary" | "recommendations" | "purchasePlan" | "market";
 
 export default function Home() {
   const [tab, setTab] = useState<Tab>("summary");
@@ -40,6 +44,11 @@ export default function Home() {
   const [renamingId, setRenamingId] = useState<number | null>(null);
   const [renameValue, setRenameValue] = useState<string>("");
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
+  const [purchasePlanLines, setPurchasePlanLines] = useState<PurchasePlanLineIn[]>([]);
+  const [purchasePlanResult, setPurchasePlanResult] = useState<PurchasePlanEvaluationResponse | null>(null);
+  const [purchasePlanError, setPurchasePlanError] = useState<string | null>(null);
+  const [purchasePlanStatus, setPurchasePlanStatus] = useState<string | null>(null);
+  const [purchasePlanLoading, setPurchasePlanLoading] = useState(false);
 
   // F1 opens the help modal
   const handleGlobalKey = useCallback((e: KeyboardEvent) => {
@@ -180,9 +189,78 @@ export default function Home() {
     }
   };
 
+  const recommendationTypeToHoldingType = (category: string): HoldingIn["holding_type"] => {
+    const normalized = category.toLowerCase();
+    if (normalized === "etf") return "etf";
+    if (normalized === "mutual fund") return "mutual_fund";
+    return "stock";
+  };
+
+  const handleAddRecommendationToPlan = (rec: Recommendation) => {
+    setPurchasePlanLines((prev) => {
+      const exists = prev.some((line) => line.ticker.toUpperCase() === rec.ticker.toUpperCase());
+      if (exists) return prev;
+      return [
+        ...prev,
+        {
+          ticker: rec.ticker.toUpperCase(),
+          name: rec.name,
+          holding_type: recommendationTypeToHoldingType(rec.category),
+          input_mode: "dollars",
+        },
+      ];
+    });
+    setPurchasePlanStatus(`${rec.ticker.toUpperCase()} added to purchase plan.`);
+  };
+
+  const handleAddManualPlanLine = () => {
+    setPurchasePlanLines((prev) => [
+      ...prev,
+      {
+        ticker: "",
+        name: "",
+        holding_type: "stock",
+        input_mode: "dollars",
+      },
+    ]);
+    setPurchasePlanStatus(null);
+  };
+
+  const handleUpdatePlanLine = (index: number, patch: Partial<PurchasePlanLineIn>) => {
+    setPurchasePlanLines((prev) => prev.map((line, idx) => (idx === index ? { ...line, ...patch } : line)));
+  };
+
+  const handleRemovePlanLine = (index: number) => {
+    setPurchasePlanLines((prev) => prev.filter((_, idx) => idx !== index));
+  };
+
+  const handleEvaluatePurchasePlan = async () => {
+    if (!currentHoldings.length) {
+      setPurchasePlanError("Please analyse a portfolio before evaluating a purchase plan.");
+      return;
+    }
+
+    setPurchasePlanLoading(true);
+    setPurchasePlanError(null);
+    setPurchasePlanStatus(null);
+    try {
+      const result = await api.evaluatePurchasePlan({
+        current_holdings: currentHoldings,
+        plan_lines: purchasePlanLines,
+      });
+      setPurchasePlanResult(result);
+      setPurchasePlanStatus("Purchase plan evaluated successfully.");
+    } catch (err) {
+      setPurchasePlanError(err instanceof Error ? err.message : "Failed to evaluate purchase plan.");
+    } finally {
+      setPurchasePlanLoading(false);
+    }
+  };
+
   const tabs: { key: Tab; label: string; icon: React.ReactNode }[] = [
     { key: "summary", label: "Portfolio Summary", icon: <BarChart2 className="h-4 w-4" /> },
     { key: "recommendations", label: "Recommendations", icon: <TrendingUp className="h-4 w-4" /> },
+    { key: "purchasePlan", label: "Purchase Plan", icon: <Save className="h-4 w-4" /> },
     { key: "market", label: "Market Overview", icon: <BarChart2 className="h-4 w-4" /> },
   ];
 
@@ -269,7 +347,27 @@ export default function Home() {
             {/* Tab content */}
             <div className="p-6">
               {tab === "summary" && summary && <SectorSummary summary={summary} />}
-                {tab === "recommendations" && recs && <RecommendationList data={recs} holdings={currentHoldings} />}
+              {tab === "recommendations" && recs && (
+                <RecommendationList
+                  data={recs}
+                  holdings={currentHoldings}
+                  onAddToPlan={handleAddRecommendationToPlan}
+                />
+              )}
+              {tab === "purchasePlan" && (
+                <PurchasePlan
+                  planLines={purchasePlanLines}
+                  currentHoldingsCount={currentHoldings.length}
+                  evaluating={purchasePlanLoading}
+                  error={purchasePlanError}
+                  status={purchasePlanStatus}
+                  result={purchasePlanResult}
+                  onAddManual={handleAddManualPlanLine}
+                  onRemove={handleRemovePlanLine}
+                  onUpdate={handleUpdatePlanLine}
+                  onEvaluate={handleEvaluatePurchasePlan}
+                />
+              )}
               {tab === "market" && market && (
                 <MarketOverview indexes={marketIndexes} sectors={market} stories={marketStories} />
               )}

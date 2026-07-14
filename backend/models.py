@@ -121,3 +121,70 @@ class PortfolioSnapshot(BaseModel):
 class SnapshotDeleteResponse(BaseModel):
     status: str
     id: int
+
+
+class PurchasePlanLineIn(BaseModel):
+    ticker: str = Field(..., description="Ticker to add to the purchase plan")
+    name: Optional[str] = Field(None, description="Optional display name")
+    holding_type: str = Field(
+        "stock",
+        description="Type of planned purchase: 'etf', 'mutual_fund', or 'stock'",
+    )
+    input_mode: str = Field(
+        "dollars",
+        description="How the user entered quantity: 'dollars' or 'shares'",
+    )
+    dollars: Optional[float] = Field(None, description="Target dollar buy amount")
+    shares: Optional[float] = Field(None, description="Target shares to buy")
+
+
+class PurchasePlanEvaluateRequest(BaseModel):
+    current_holdings: list[HoldingIn]
+    plan_lines: list[PurchasePlanLineIn]
+
+
+class PurchasePlanLineResult(BaseModel):
+    ticker: str
+    name: str
+    holding_type: str
+    input_mode: str
+    dollars: float
+    shares: Optional[float] = None
+    resolved_price: Optional[float] = None
+
+
+class PlanSectorDelta(BaseModel):
+    sector: str
+    before_weight_pct: float
+    after_weight_pct: float
+    delta_weight_pct: float
+
+
+class PlanScoreBreakdown(BaseModel):
+    sector_balance_before: float
+    sector_balance_after: float
+    concentration_before: float
+    concentration_after: float
+    overlap_before: float
+    overlap_after: float
+    diversification_before: float
+    diversification_after: float
+    overall_before: float
+    overall_after: float
+
+
+class PlanSuggestion(BaseModel):
+    action: str
+    severity: str
+    message: str
+
+
+class PurchasePlanEvaluationResponse(BaseModel):
+    normalized_plan_lines: list[PurchasePlanLineResult]
+    invalid_plan_lines: list[str] = Field(default_factory=list)
+    projected_holdings: list[HoldingIn]
+    before_summary: PortfolioSummary
+    after_summary: PortfolioSummary
+    sector_deltas: list[PlanSectorDelta]
+    score_breakdown: PlanScoreBreakdown
+    suggestions: list[PlanSuggestion]

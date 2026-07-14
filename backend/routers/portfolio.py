@@ -8,6 +8,8 @@ from fastapi import APIRouter, HTTPException
 from typing import Literal
 
 from models import (
+    PurchasePlanEvaluateRequest,
+    PurchasePlanEvaluationResponse,
     PortfolioIn,
     PortfolioSaveRequest,
     PortfolioSnapshot,
@@ -20,6 +22,7 @@ from models import (
     SnapshotRenameRequest,
 )
 from services.portfolio_service import analyse_portfolio
+from services.purchase_plan_service import evaluate_purchase_plan
 from services.recommendation_service import (
     generate_recommendation_page,
     generate_recommendations,
@@ -89,6 +92,17 @@ def recommend_related(
         limit=limit,
     )
     return RelatedRecommendationResponse(source_ticker=source_ticker.upper(), items=items)
+
+
+@router.post("/plan/evaluate", response_model=PurchasePlanEvaluationResponse)
+def evaluate_plan(request: PurchasePlanEvaluateRequest) -> PurchasePlanEvaluationResponse:
+    try:
+        return evaluate_purchase_plan(
+            current_holdings=request.current_holdings,
+            plan_lines=request.plan_lines,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.post("/save", response_model=PortfolioSnapshotListItem)

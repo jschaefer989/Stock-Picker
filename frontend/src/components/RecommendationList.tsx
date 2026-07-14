@@ -8,6 +8,7 @@ import type { HoldingIn, Recommendation, RecommendationResponse } from "@/lib/ty
 interface Props {
   data: RecommendationResponse;
   holdings: HoldingIn[];
+  onAddToPlan?: (rec: Recommendation) => void;
 }
 
 type RecommendationFilter = "all" | "funds" | "stocks";
@@ -34,7 +35,7 @@ function ReturnBadge({ pct }: { pct: number | null }) {
   );
 }
 
-export default function RecommendationList({ data, holdings }: Props) {
+export default function RecommendationList({ data, holdings, onAddToPlan }: Props) {
   const [filter, setFilter] = useState<RecommendationFilter>("all");
   const [lens, setLens] = useState<RecommendationLens>("both");
   const [maxPrice, setMaxPrice] = useState<string>("");
@@ -321,6 +322,21 @@ export default function RecommendationList({ data, holdings }: Props) {
             </span>
           ))}
         </div>
+
+        {onAddToPlan && (
+          <div className="mt-3">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onAddToPlan(rec);
+              }}
+              className="rounded-full border border-blue-300 dark:border-blue-700 px-3 py-1 text-xs font-semibold text-blue-700 dark:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-950/30"
+            >
+              Add to Plan
+            </button>
+          </div>
+        )}
       </div>
     );
   };

@@ -1,5 +1,7 @@
 import type {
   PortfolioIn,
+  PurchasePlanEvaluateRequest,
+  PurchasePlanEvaluationResponse,
   PortfolioSaveRequest,
   PortfolioSnapshot,
   PortfolioSnapshotListItem,
@@ -111,6 +113,9 @@ export const api = {
       max_price: params.maxPrice,
       limit: params.limit ?? 6,
     }),
+
+  evaluatePurchasePlan: (payload: PurchasePlanEvaluateRequest) =>
+    post<PurchasePlanEvaluationResponse>("/api/portfolio/plan/evaluate", payload),
 
   savePortfolioSnapshot: (payload: PortfolioSaveRequest) =>
     post<PortfolioSnapshotListItem>("/api/portfolio/save", payload),

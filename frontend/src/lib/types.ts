@@ -133,3 +133,66 @@ export interface MarketOverviewResponse {
   indexes: MarketIndexReturn[];
   stories: MarketStory[];
 }
+
+export type PurchasePlanInputMode = "dollars" | "shares";
+
+export interface PurchasePlanLineIn {
+  ticker: string;
+  name?: string;
+  holding_type: "etf" | "mutual_fund" | "stock";
+  input_mode: PurchasePlanInputMode;
+  dollars?: number;
+  shares?: number;
+}
+
+export interface PurchasePlanEvaluateRequest {
+  current_holdings: HoldingIn[];
+  plan_lines: PurchasePlanLineIn[];
+}
+
+export interface PurchasePlanLineResult {
+  ticker: string;
+  name: string;
+  holding_type: "etf" | "mutual_fund" | "stock";
+  input_mode: PurchasePlanInputMode;
+  dollars: number;
+  shares: number | null;
+  resolved_price: number | null;
+}
+
+export interface PlanSectorDelta {
+  sector: string;
+  before_weight_pct: number;
+  after_weight_pct: number;
+  delta_weight_pct: number;
+}
+
+export interface PlanScoreBreakdown {
+  sector_balance_before: number;
+  sector_balance_after: number;
+  concentration_before: number;
+  concentration_after: number;
+  overlap_before: number;
+  overlap_after: number;
+  diversification_before: number;
+  diversification_after: number;
+  overall_before: number;
+  overall_after: number;
+}
+
+export interface PlanSuggestion {
+  action: string;
+  severity: string;
+  message: string;
+}
+
+export interface PurchasePlanEvaluationResponse {
+  normalized_plan_lines: PurchasePlanLineResult[];
+  invalid_plan_lines: string[];
+  projected_holdings: HoldingIn[];
+  before_summary: PortfolioSummary;
+  after_summary: PortfolioSummary;
+  sector_deltas: PlanSectorDelta[];
+  score_breakdown: PlanScoreBreakdown;
+  suggestions: PlanSuggestion[];
+}
