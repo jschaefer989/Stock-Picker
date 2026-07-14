@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { Minus, TrendingDown, TrendingUp } from "lucide-react";
 import { api } from "@/lib/api";
 import type { HoldingIn, Recommendation, RecommendationResponse } from "@/lib/types";
@@ -41,6 +41,11 @@ export default function RecommendationList({ data, holdings }: Props) {
   const [diversificationCards, setDiversificationCards] = useState<Recommendation[]>(() => data.recommendations);
   const [opportunisticCards, setOpportunisticCards] = useState<Recommendation[]>(() => data.opportunistic_recommendations);
   const [applyLoading, setApplyLoading] = useState(false);
+  const [selectedRecommendation, setSelectedRecommendation] = useState<Recommendation | null>(null);
+  const [selectedAnchor, setSelectedAnchor] = useState<{ section: RecommendationSection; ticker: string } | null>(null);
+  const [relatedRecommendations, setRelatedRecommendations] = useState<Recommendation[]>([]);
+  const [relatedLoading, setRelatedLoading] = useState(false);
+  const [relatedError, setRelatedError] = useState<string | null>(null);
 
   const fmtVolume = (v: number) =>
     new Intl.NumberFormat("en-US", {
@@ -103,10 +108,46 @@ export default function RecommendationList({ data, holdings }: Props) {
     [data.recommendations.length, data.opportunistic_recommendations.length],
   );
 
+  const selectRecommendation = useCallback(
+    async (rec: Recommendation, section: RecommendationSection) => {
+      setSelectedRecommendation(rec);
+      setSelectedAnchor({ section, ticker: rec.ticker });
+      setRelatedLoading(true);
+      setRelatedError(null);
+
+      try {
+        const excludeTickers = Array.from(new Set([...diversificationCards, ...opportunisticCards].map((item) => item.ticker)));
+        const response = await api.getRelatedRecommendations(
+          { holdings },
+          {
+            sourceTicker: rec.ticker,
+            excludeTickers,
+            assetType: filter,
+            maxPrice: hasValidMaxPrice ? parsedMaxPrice : null,
+            limit: 6,
+          },
+        );
+        setRelatedRecommendations(response.items);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Unable to load related recommendations.";
+        setRelatedRecommendations([]);
+        setRelatedError(message);
+      } finally {
+        setRelatedLoading(false);
+      }
+    },
+    [diversificationCards, opportunisticCards, holdings, filter, hasValidMaxPrice, parsedMaxPrice],
+  );
+
   useEffect(() => {
     setDiversificationCards(data.recommendations);
     setOpportunisticCards(data.opportunistic_recommendations);
     setApplyLoading(false);
+    setSelectedRecommendation(null);
+    setSelectedAnchor(null);
+    setRelatedRecommendations([]);
+    setRelatedError(null);
+    setRelatedLoading(false);
   }, [data.recommendations, data.opportunistic_recommendations]);
 
   const fetchAllForSection = useCallback(
@@ -166,6 +207,123 @@ export default function RecommendationList({ data, holdings }: Props) {
         ? "bg-cyan-600 text-white"
         : "bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700"
     }`;
+
+  const renderRecommendationCard = (
+    rec: Recommendation,
+    section: RecommendationSection,
+    key: string,
+    showDeepMetrics = section === "diversification",
+  ) => {
+    const isOpportunistic = section === "opportunistic";
+    return (
+      <div
+        key={key}
+        className={`rounded-xl p-4 hover:shadow-md transition-shadow cursor-pointer ${
+          isOpportunistic
+            ? "border border-cyan-200 dark:border-cyan-900/50 bg-cyan-50/30 dark:bg-cyan-950/10"
+            : "border border-gray-200 dark:border-gray-700"
+        }`}
+        role="button"
+        tabIndex={0}
+        onClick={() => {
+          void selectRecommendation(rec, section);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            void selectRecommendation(rec, section);
+          }
+        }}
+      >
+        <div className="flex items-start justify-between">
+          <div>
+            <span
+              className={`inline-block rounded text-xs font-bold px-2 py-0.5 mb-1 ${
+                isOpportunistic
+                  ? "bg-cyan-100 dark:bg-cyan-900/40 text-cyan-700 dark:text-cyan-300"
+                  : "bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300"
+              }`}
+            >
+              {rec.ticker}
+            </span>
+            <p className="text-sm font-semibold text-gray-900 dark:text-white leading-snug">{rec.name}</p>
+          </div>
+          <span className="rounded-full bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 text-xs px-2 py-0.5 ml-2 flex-shrink-0">
+            {rec.category}
+          </span>
+        </div>
+
+        <div className="mt-1 flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
+          <span>Current Price</span>
+          <span className="font-medium text-gray-700 dark:text-gray-200">
+            {rec.current_price !== null
+              ? new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(rec.current_price)
+              : "N/A"}
+          </span>
+        </div>
+
+        <p className="mt-2 text-xs text-gray-600 dark:text-gray-400">{rec.rationale}</p>
+
+        <div className="mt-3 flex items-center justify-between">
+          <ReturnBadge pct={rec.ytd_return_pct} />
+          <span
+            className={`rounded-full text-xs px-2 py-0.5 font-semibold ${
+              isOpportunistic
+                ? "bg-cyan-100 dark:bg-cyan-900/40 text-cyan-700 dark:text-cyan-300"
+                : "bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300"
+            }`}
+          >
+            Rank Score: {fmtFixed(rec.ranking_score, 2)}
+          </span>
+        </div>
+
+        {showDeepMetrics && (
+          <div className="mt-3 rounded-lg border border-gray-200 dark:border-gray-700 p-2.5 bg-gray-50/80 dark:bg-gray-900/50">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-1.5">
+              Why This Ranked Well
+            </p>
+            <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-gray-600 dark:text-gray-300">
+              <span>Momentum (3M)</span>
+              <span className="text-right font-medium">{fmtPct(rec.momentum_3m_pct, 2)}</span>
+              <span>Avg $ Volume (3M)</span>
+              <span className="text-right font-medium">{fmtMoneyCompact(rec.avg_dollar_volume_3m)}</span>
+              <span>Liquidity (log10)</span>
+              <span className="text-right font-medium">{fmtFixed(rec.liquidity_log10, 2)}</span>
+              <span>Expense Ratio</span>
+              <span className="text-right font-medium">{fmtPct(rec.expense_ratio_pct, 3)}</span>
+              <span>News Sentiment</span>
+              <span className="text-right font-medium">
+                {sentimentLabel(rec.news_sentiment_score)} ({fmtFixed(rec.news_sentiment_score, 2)})
+              </span>
+              <span>Stories Scanned</span>
+              <span className="text-right font-medium">{rec.news_story_count}</span>
+              <span>Earnings Event Boost</span>
+              <span className="text-right font-medium">{fmtFixed(rec.earnings_proximity_bonus, 2)}</span>
+              <span>Next Earnings</span>
+              <span className="text-right font-medium">
+                {rec.next_earnings_date
+                  ? `${new Date(rec.next_earnings_date).toLocaleDateString()}${
+                      rec.days_to_next_earnings !== null ? ` (${rec.days_to_next_earnings}d)` : ""
+                    }`
+                  : "N/A"}
+              </span>
+            </div>
+          </div>
+        )}
+
+        <div className="mt-2 flex flex-wrap gap-1">
+          {rec.sectors_covered.map((s) => (
+            <span
+              key={`${key}-sector-${s}`}
+              className="rounded-full bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 text-xs px-2 py-0.5"
+            >
+              {s}
+            </span>
+          ))}
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div className="space-y-6">
@@ -284,79 +442,53 @@ export default function RecommendationList({ data, holdings }: Props) {
           {diversificationVisible.length > 0 && (
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {diversificationVisible.map((rec) => (
-                <div key={rec.ticker} className="rounded-xl border border-gray-200 dark:border-gray-700 p-4 hover:shadow-md transition-shadow">
-                  <div className="flex items-start justify-between">
-                    <div>
-                      <span className="inline-block rounded bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 text-xs font-bold px-2 py-0.5 mb-1">
-                        {rec.ticker}
-                      </span>
-                      <p className="text-sm font-semibold text-gray-900 dark:text-white leading-snug">
-                        {rec.name}
-                      </p>
-                    </div>
-                    <span className="rounded-full bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 text-xs px-2 py-0.5 ml-2 flex-shrink-0">
-                      {rec.category}
-                    </span>
-                  </div>
-
-                  <div className="mt-1 flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
-                    <span>Current Price</span>
-                    <span className="font-medium text-gray-700 dark:text-gray-200">
-                      {rec.current_price !== null
-                        ? new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(rec.current_price)
-                        : "N/A"}
-                    </span>
-                  </div>
-
-                  <p className="mt-2 text-xs text-gray-600 dark:text-gray-400">{rec.rationale}</p>
-
-                  <div className="mt-3 flex items-center justify-between">
-                    <ReturnBadge pct={rec.ytd_return_pct} />
-                    <span className="rounded-full bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300 text-xs px-2 py-0.5 font-semibold">
-                      Rank Score: {fmtFixed(rec.ranking_score, 2)}
-                    </span>
-                  </div>
-
-                  <div className="mt-3 rounded-lg border border-gray-200 dark:border-gray-700 p-2.5 bg-gray-50/80 dark:bg-gray-900/50">
-                    <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-1.5">
-                      Why This Ranked Well
-                    </p>
-                    <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-gray-600 dark:text-gray-300">
-                      <span>Momentum (3M)</span>
-                      <span className="text-right font-medium">{fmtPct(rec.momentum_3m_pct, 2)}</span>
-                      <span>Avg $ Volume (3M)</span>
-                      <span className="text-right font-medium">{fmtMoneyCompact(rec.avg_dollar_volume_3m)}</span>
-                      <span>Liquidity (log10)</span>
-                      <span className="text-right font-medium">{fmtFixed(rec.liquidity_log10, 2)}</span>
-                      <span>Expense Ratio</span>
-                      <span className="text-right font-medium">{fmtPct(rec.expense_ratio_pct, 3)}</span>
-                      <span>News Sentiment</span>
-                      <span className="text-right font-medium">
-                        {sentimentLabel(rec.news_sentiment_score)} ({fmtFixed(rec.news_sentiment_score, 2)})
-                      </span>
-                      <span>Stories Scanned</span>
-                      <span className="text-right font-medium">{rec.news_story_count}</span>
-                      <span>Earnings Event Boost</span>
-                      <span className="text-right font-medium">{fmtFixed(rec.earnings_proximity_bonus, 2)}</span>
-                      <span>Next Earnings</span>
-                      <span className="text-right font-medium">
-                        {rec.next_earnings_date
-                          ? `${new Date(rec.next_earnings_date).toLocaleDateString()}${
-                              rec.days_to_next_earnings !== null ? ` (${rec.days_to_next_earnings}d)` : ""
-                            }`
-                          : "N/A"}
-                      </span>
-                    </div>
-                  </div>
-
-                  <div className="mt-2 flex flex-wrap gap-1">
-                    {rec.sectors_covered.map((s) => (
-                      <span key={s} className="rounded-full bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 text-xs px-2 py-0.5">
-                        {s}
-                      </span>
-                    ))}
-                  </div>
-                </div>
+                <Fragment key={`div-group-${rec.ticker}`}>
+                  {renderRecommendationCard(rec, "diversification", rec.ticker)}
+                  {selectedRecommendation &&
+                    selectedAnchor?.section === "diversification" &&
+                    selectedAnchor.ticker === rec.ticker && (
+                      <div className="sm:col-span-2 lg:col-span-3 rounded-xl border border-cyan-200 dark:border-cyan-900/40 bg-cyan-50/30 dark:bg-cyan-950/10 p-4">
+                        <div className="mb-3 flex items-center justify-between gap-3">
+                          <p className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+                            Related ideas for {selectedRecommendation.ticker}
+                          </p>
+                          <button
+                            type="button"
+                            className="rounded-full bg-white/80 dark:bg-gray-900/70 px-3 py-1 text-xs font-semibold text-gray-600 dark:text-gray-300 hover:bg-white dark:hover:bg-gray-800"
+                            onClick={() => {
+                              setSelectedRecommendation(null);
+                              setSelectedAnchor(null);
+                              setRelatedRecommendations([]);
+                              setRelatedError(null);
+                              setRelatedLoading(false);
+                            }}
+                          >
+                            Close
+                          </button>
+                        </div>
+                        {relatedLoading ? (
+                          <p className="text-xs text-gray-500 dark:text-gray-400">Finding related stocks/funds...</p>
+                        ) : relatedError ? (
+                          <p className="text-xs text-red-600 dark:text-red-400">{relatedError}</p>
+                        ) : relatedRecommendations.length === 0 ? (
+                          <p className="text-xs text-gray-500 dark:text-gray-400">
+                            No net-new related stocks/funds were found for this ticker.
+                          </p>
+                        ) : (
+                          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                            {relatedRecommendations.map((related) =>
+                              renderRecommendationCard(
+                                related,
+                                "diversification",
+                                `div-related-${selectedRecommendation.ticker}-${related.ticker}`,
+                                true,
+                              ),
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                </Fragment>
               ))}
             </div>
           )}
@@ -376,47 +508,53 @@ export default function RecommendationList({ data, holdings }: Props) {
           {opportunisticVisible.length > 0 && (
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {opportunisticVisible.map((rec) => (
-                <div key={`op-${rec.ticker}`} className="rounded-xl border border-cyan-200 dark:border-cyan-900/50 p-4 hover:shadow-md transition-shadow bg-cyan-50/30 dark:bg-cyan-950/10">
-                  <div className="flex items-start justify-between">
-                    <div>
-                      <span className="inline-block rounded bg-cyan-100 dark:bg-cyan-900/40 text-cyan-700 dark:text-cyan-300 text-xs font-bold px-2 py-0.5 mb-1">
-                        {rec.ticker}
-                      </span>
-                      <p className="text-sm font-semibold text-gray-900 dark:text-white leading-snug">
-                        {rec.name}
-                      </p>
-                    </div>
-                    <span className="rounded-full bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 text-xs px-2 py-0.5 ml-2 flex-shrink-0">
-                      {rec.category}
-                    </span>
-                  </div>
-
-                  <div className="mt-1 flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
-                    <span>Current Price</span>
-                    <span className="font-medium text-gray-700 dark:text-gray-200">
-                      {rec.current_price !== null
-                        ? new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(rec.current_price)
-                        : "N/A"}
-                    </span>
-                  </div>
-
-                  <p className="mt-2 text-xs text-gray-600 dark:text-gray-400">{rec.rationale}</p>
-
-                  <div className="mt-3 flex items-center justify-between">
-                    <ReturnBadge pct={rec.ytd_return_pct} />
-                    <span className="rounded-full bg-cyan-100 dark:bg-cyan-900/40 text-cyan-700 dark:text-cyan-300 text-xs px-2 py-0.5 font-semibold">
-                      Rank Score: {fmtFixed(rec.ranking_score, 2)}
-                    </span>
-                  </div>
-
-                  <div className="mt-2 flex flex-wrap gap-1">
-                    {rec.sectors_covered.map((s) => (
-                      <span key={`op-sector-${rec.ticker}-${s}`} className="rounded-full bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 text-xs px-2 py-0.5">
-                        {s}
-                      </span>
-                    ))}
-                  </div>
-                </div>
+                <Fragment key={`op-group-${rec.ticker}`}>
+                  {renderRecommendationCard(rec, "opportunistic", `op-${rec.ticker}`)}
+                  {selectedRecommendation &&
+                    selectedAnchor?.section === "opportunistic" &&
+                    selectedAnchor.ticker === rec.ticker && (
+                      <div className="sm:col-span-2 lg:col-span-3 rounded-xl border border-cyan-200 dark:border-cyan-900/40 bg-cyan-50/30 dark:bg-cyan-950/10 p-4">
+                        <div className="mb-3 flex items-center justify-between gap-3">
+                          <p className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+                            Related ideas for {selectedRecommendation.ticker}
+                          </p>
+                          <button
+                            type="button"
+                            className="rounded-full bg-white/80 dark:bg-gray-900/70 px-3 py-1 text-xs font-semibold text-gray-600 dark:text-gray-300 hover:bg-white dark:hover:bg-gray-800"
+                            onClick={() => {
+                              setSelectedRecommendation(null);
+                              setSelectedAnchor(null);
+                              setRelatedRecommendations([]);
+                              setRelatedError(null);
+                              setRelatedLoading(false);
+                            }}
+                          >
+                            Close
+                          </button>
+                        </div>
+                        {relatedLoading ? (
+                          <p className="text-xs text-gray-500 dark:text-gray-400">Finding related stocks/funds...</p>
+                        ) : relatedError ? (
+                          <p className="text-xs text-red-600 dark:text-red-400">{relatedError}</p>
+                        ) : relatedRecommendations.length === 0 ? (
+                          <p className="text-xs text-gray-500 dark:text-gray-400">
+                            No net-new related stocks/funds were found for this ticker.
+                          </p>
+                        ) : (
+                          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                            {relatedRecommendations.map((related) =>
+                              renderRecommendationCard(
+                                related,
+                                "opportunistic",
+                                `op-related-${selectedRecommendation.ticker}-${related.ticker}`,
+                                true,
+                              ),
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                </Fragment>
               ))}
             </div>
           )}

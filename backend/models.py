@@ -96,6 +96,11 @@ class RecommendationPageResponse(BaseModel):
     has_more: bool
 
 
+class RelatedRecommendationResponse(BaseModel):
+    source_ticker: str
+    items: list[Recommendation]
+
+
 class PortfolioSnapshotListItem(BaseModel):
     id: int
     created_at: str

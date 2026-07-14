@@ -6,6 +6,7 @@ import type {
   PortfolioSummary,
   RecommendationPageResponse,
   RecommendationResponse,
+  RelatedRecommendationResponse,
   MarketOverviewResponse,
   SectorETFReturn,
   SnapshotDeleteResponse,
@@ -90,6 +91,24 @@ export const api = {
       asset_type: params.assetType,
       max_price: params.maxPrice,
       offset: params.offset,
+      limit: params.limit ?? 6,
+    }),
+
+  getRelatedRecommendations: (
+    portfolio: PortfolioIn,
+    params: {
+      sourceTicker: string;
+      excludeTickers: string[];
+      assetType: "all" | "funds" | "stocks";
+      maxPrice: number | null;
+      limit?: number;
+    },
+  ) =>
+    post<RelatedRecommendationResponse>("/api/portfolio/recommend/related", portfolio, {
+      source_ticker: params.sourceTicker,
+      exclude_tickers: params.excludeTickers.join(","),
+      asset_type: params.assetType,
+      max_price: params.maxPrice,
       limit: params.limit ?? 6,
     }),
 

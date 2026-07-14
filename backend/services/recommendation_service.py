@@ -1032,6 +1032,113 @@ def _filter_recommendation_items(
     return filtered
 
 
+def _candidate_universe() -> list[tuple[str, str, str, str, list[str]]]:
+    """Build a de-duplicated recommendation universe across static and dynamic candidates."""
+    seen: set[str] = set()
+    universe: list[tuple[str, str, str, str, list[str]]] = []
+
+    for sector_candidates in SECTOR_CATALOGUE.values():
+        for ticker, name, category, rationale, sectors in sector_candidates:
+            if ticker in seen:
+                continue
+            seen.add(ticker)
+            universe.append((ticker, name, category, rationale, sectors))
+
+    for ticker, name, category, rationale, sectors, _fund_count in _dynamic_opportunistic_candidates():
+        if ticker in seen:
+            continue
+        seen.add(ticker)
+        universe.append((ticker, name, category, rationale, sectors))
+
+    return universe
+
+
+def _source_profile(source_ticker: str) -> tuple[set[str], str | None, str | None, float | None, str | None]:
+    source_info = _ticker_info(source_ticker)
+    source_sector = source_info.get("sector") if isinstance(source_info.get("sector"), str) else None
+    source_industry = source_info.get("industry") if isinstance(source_info.get("industry"), str) else None
+    source_price = _current_price(source_ticker)
+
+    sectors: set[str] = set()
+    source_category: str | None = None
+    if source_sector:
+        sectors.add(source_sector)
+
+    for ticker, _name, candidate_category, _rationale, candidate_sectors in _candidate_universe():
+        if ticker == source_ticker:
+            sectors.update(candidate_sectors)
+            source_category = candidate_category
+
+    return sectors, source_sector, source_industry, source_price, source_category
+
+
+def generate_related_recommendations(
+    source_ticker: str,
+    exclude_tickers: list[str],
+    asset_type: Literal["all", "funds", "stocks"],
+    max_price: float | None,
+    limit: int,
+) -> list[Recommendation]:
+    source = source_ticker.upper().strip()
+    if not source:
+        return []
+
+    excluded = {ticker.upper().strip() for ticker in exclude_tickers if ticker.strip()}
+    excluded.add(source)
+
+    source_sectors, source_sector, source_industry, source_price, source_category = _source_profile(source)
+    scored: list[tuple[float, Recommendation]] = []
+
+    for ticker, name, category, rationale, sectors in _candidate_universe():
+        if ticker in excluded:
+            continue
+
+        rec = _build_recommendation_payload(ticker, name, category, rationale, sectors)
+
+        shared_sector_count = len(source_sectors.intersection(set(sectors)))
+        if source_sector and source_sector in sectors:
+            shared_sector_count += 1
+
+        info = _ticker_info(ticker)
+        candidate_industry = info.get("industry") if isinstance(info.get("industry"), str) else None
+        industry_match = 1.0 if (source_industry and candidate_industry == source_industry) else 0.0
+
+        category_match = 1.0 if (source_category is not None and rec.category == source_category) else 0.0
+
+        if source_price is not None and rec.current_price is not None and source_price > 0 and rec.current_price > 0:
+            price_gap_ratio = min(abs(rec.current_price - source_price) / max(rec.current_price, source_price), 1.0)
+            price_similarity = 1.0 - price_gap_ratio
+        else:
+            price_similarity = 0.2
+
+        momentum_quality = max(0.0, min((rec.momentum_3m_pct + 20.0) / 40.0, 1.0))
+
+        similarity = (
+            (2.3 * float(shared_sector_count))
+            + (1.5 * industry_match)
+            + (0.8 * category_match)
+            + (1.2 * price_similarity)
+            + (0.4 * momentum_quality)
+        )
+
+        rationale_bits: list[str] = []
+        if shared_sector_count > 0:
+            rationale_bits.append("sector overlap")
+        if industry_match > 0:
+            rationale_bits.append("industry match")
+        if price_similarity >= 0.7:
+            rationale_bits.append("similar price band")
+
+        if rationale_bits:
+            rec.rationale = f"{rec.rationale} Related to {source} via {', '.join(rationale_bits)}."
+
+        scored.append((similarity, rec))
+
+    ranked = [rec for _, rec in sorted(scored, key=lambda row: (row[0], row[1].ranking_score), reverse=True)]
+    filtered = _filter_recommendation_items(ranked, asset_type, max_price)
+    return filtered[: max(1, limit)]
+
+
 def generate_recommendation_page(
     summary: PortfolioSummary,
     section: Literal["diversification", "opportunistic"],

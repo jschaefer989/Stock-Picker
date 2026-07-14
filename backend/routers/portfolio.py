@@ -13,13 +13,18 @@ from models import (
     PortfolioSnapshot,
     PortfolioSnapshotListItem,
     PortfolioSummary,
+    RelatedRecommendationResponse,
     RecommendationPageResponse,
     RecommendationResponse,
     SnapshotDeleteResponse,
     SnapshotRenameRequest,
 )
 from services.portfolio_service import analyse_portfolio
-from services.recommendation_service import generate_recommendation_page, generate_recommendations
+from services.recommendation_service import (
+    generate_recommendation_page,
+    generate_recommendations,
+    generate_related_recommendations,
+)
 from services.db_service import delete_snapshot, get_snapshot, list_snapshots, rename_snapshot, save_snapshot
 
 router = APIRouter()
@@ -61,6 +66,29 @@ def recommend_page(
         offset=offset,
         limit=limit,
     )
+
+
+@router.post("/recommend/related", response_model=RelatedRecommendationResponse)
+def recommend_related(
+    portfolio: PortfolioIn,
+    source_ticker: str,
+    exclude_tickers: str | None = None,
+    asset_type: Literal["all", "funds", "stocks"] = "all",
+    max_price: float | None = None,
+    limit: int = 6,
+) -> RelatedRecommendationResponse:
+    if not portfolio.holdings:
+        raise HTTPException(status_code=400, detail="Portfolio must contain at least one holding.")
+
+    excludes = [token.strip().upper() for token in (exclude_tickers or "").split(",") if token.strip()]
+    items = generate_related_recommendations(
+        source_ticker=source_ticker,
+        exclude_tickers=excludes,
+        asset_type=asset_type,
+        max_price=max_price,
+        limit=limit,
+    )
+    return RelatedRecommendationResponse(source_ticker=source_ticker.upper(), items=items)
 
 
 @router.post("/save", response_model=PortfolioSnapshotListItem)

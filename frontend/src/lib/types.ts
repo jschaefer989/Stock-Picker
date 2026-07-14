@@ -77,6 +77,11 @@ export interface RecommendationPageResponse {
   has_more: boolean;
 }
 
+export interface RelatedRecommendationResponse {
+  source_ticker: string;
+  items: Recommendation[];
+}
+
 export interface PortfolioSnapshotListItem {
   id: number;
   created_at: string;
